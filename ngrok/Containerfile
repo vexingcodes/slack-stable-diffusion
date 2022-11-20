@@ -1,0 +1,12 @@
+# Download and extract ngrok.
+FROM docker.io/library/debian:bullseye-slim as download
+ADD https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz /
+RUN tar --extract --file ngrok-v3-stable-linux-amd64.tgz
+
+# Copy in the ngrok binary in its own stage, so we get an image with literally just the ngrok
+# binary and the ngrok config file as its only contents.
+FROM scratch
+USER 1000:1000
+COPY --from=download /ngrok /ngrok
+COPY ./ngrok.yaml /ngrok.yaml
+ENTRYPOINT ["/ngrok", "--config", "/ngrok.yaml"]

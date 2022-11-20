@@ -1,0 +1,16 @@
+services:
+  ngrok:
+    build: ngrok
+    command: http stable-diffusion:8000
+    environment:
+      NGROK_AUTHTOKEN: "${NGROK_AUTHTOKEN:?You must provide an ngrok auth token!}"
+    ports: ["${NGROK_INSPECTOR_PORT:-4040}:4040"]
+    restart: unless-stopped
+  stable-diffusion:
+    build: stable-diffusion
+    environment:
+      IMGUR_CLIENT_ID: "${IMGUR_CLIENT_ID:?You must provide an imgur client ID!}"
+      IMGUR_CLIENT_SECRET: "${IMGUR_CLIENT_SECRET:?You must provide an imgur client secret!}"
+      SLACK_APP_ID: "${SLACK_APP_ID:?You must provide a slack app ID!}"
+      SLACK_SIGNING_SECRET: "${SLACK_SIGNING_SECRET:?You must provide a slack signing secret!}"
+    restart: unless-stopped

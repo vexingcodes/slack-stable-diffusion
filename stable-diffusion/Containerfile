@@ -1,0 +1,72 @@
+# Builds a container image that can run Stable Diffusion to generate images.
+#
+# Requires the NVIDIA Container Toolkit on the container host.
+# See https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html.
+FROM docker.io/nvidia/cuda:11.8.0-base-ubuntu22.04 as stable-diffusion
+
+# Install Debian dependencies.
+#   ca-certificates -- Required to validate TLS certificates for downloads and git clone.
+#   git             -- Required to clone the stable-diffusion repository.
+#   lib*            -- Required for stable-diffusion to operate.
+#                      This list was obtained by repeatedly trying to run the txt2img.py
+#                      script below, and seeing what shared objects it tried to load but
+#                      couldn't. Then the corresponding Debian package was looked up by
+#                      going to https://packages.debian.org/index and searching for the
+#                      package containing the shared object.
+#   wget            -- Required to download several files.
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+      ca-certificates \
+      git \
+      libglib2.0-0 \
+      libsm6 \
+      libxext6 \
+      libxrender1 \
+      wget \
+ && rm -rf /var/lib/apt/lists/*
+
+# TODO non-root user here? Ideally run as non-root in rootless container.
+
+# Install conda via miniconda. Instructions from:
+# https://docs.conda.io/projects/conda/en/stable/user-guide/install/linux.html
+RUN export FILE=Miniconda3-py39_4.12.0-Linux-x86_64.sh \
+ && wget https://repo.anaconda.com/miniconda/$FILE \
+ && bash $FILE -b -u -p /usr/local \
+ && rm $FILE \
+ && conda init bash
+
+# Get the stable-diffusion source code and create the conda environment for it.
+WORKDIR /opt/
+RUN git clone https://github.com/CompVis/stable-diffusion.git
+WORKDIR /opt/stable-diffusion
+RUN conda env create -f environment.yaml \
+ && echo "conda activate ldm" >> /root/.bashrc
+
+# Download the model.
+# TODO -- Use official URL, but requires a token?
+RUN mkdir -p models/ldm/stable-diffusion-v1/ \
+ && cd models/ldm/stable-diffusion-v1/ \
+ && wget https://f004.backblazeb2.com/file/aai-blog-files/sd-v1-4.ckpt \
+ && mv *.ckpt model.ckpt
+
+# Run an image generation. This will download and cache some additional large files.
+# TODO -- Find a way to get these files without needing a GPU at build time...
+RUN conda run --name ldm --no-capture-output \
+      python scripts/txt2img.py \
+        --prompt "q" \
+        --dpm_solver \
+        --ddim_steps 25 \
+        --skip_grid \
+        --n_samples 1 \
+        --W 384 \
+        --H 384 \
+ && rm outputs/txt2img-samples/samples/*
+
+# Adds a simple FastAPI server over the  Stable Diffusion container, allowing a Slack slash-command
+# to generate images.
+FROM stable-diffusion
+RUN conda install --name ldm --channel conda-forge fastapi imgurpython python-multipart uvicorn
+WORKDIR /opt/api
+COPY *.py .
+ENTRYPOINT ["conda", "run", "--no-capture-output", "--name", "ldm", \
+              "uvicorn", "--host", "0.0.0.0", "api:app"]
